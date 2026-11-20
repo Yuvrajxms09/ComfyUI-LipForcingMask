@@ -1,0 +1,5 @@
+insightface==0.7.3
+kornia>=0.7.2,<1
+einops>=0.7,<1
+# CPU ONNX Runtime is the default provider used by the node/notebook.
+onnxruntime>=1.18

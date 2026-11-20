@@ -1,0 +1,7 @@
+This custom node integrates preprocessing code from LipForcing:
+
+  https://github.com/cvlab-kaist/LipForcing
+
+LipForcing and its adapted face-alignment components are licensed under the
+Apache License 2.0. The pinned source checkout used by this node must retain
+its upstream LICENSE and notices.
