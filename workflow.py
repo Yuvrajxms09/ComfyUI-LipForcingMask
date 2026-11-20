@@ -23,9 +23,14 @@ def wire_prototype_workflow(
 ):
     """Replace the uploaded mask video with direct LipForcing masks.
 
-    The helper keeps the prototype's post-mask temporal padding and resize
-    nodes because H3's required latent length can exceed the source frame
-    count.  LipForcing itself still emits exactly one full-frame mask per
+    The helper preserves the prototype's mask ordering exactly:
+
+        LipForcing MASK -> MaskToImage -> temporal padding -> resize to the
+        H3 canvas -> ImageToMask -> GrowMaskWithBlur
+
+    H3's required latent length can exceed the source frame count, so the
+    existing temporal padding branch remains before spatial resize and mask
+    growth.  LipForcing itself still emits exactly one full-frame mask per
     input frame.
     """
     required = {
@@ -58,18 +63,24 @@ def wire_prototype_workflow(
         "class_type": "LipForcingMask",
         "_meta": {"title": "LipForcing Mask (Full Frame)"},
     }
-    # Keep H3's tested temporal padding, but move it after the direct MASK
-    # output.  The raw full-frame mask is grown first; only then is it
-    # converted to IMAGE so the existing last-frame padding branch can extend
-    # clips to H3's required latent length.
-    wired[GROWN_MASK_NODE_ID]["inputs"]["mask"] = [NODE_ID, MASK_OUTPUT]
+    # Preserve the tested graph's ordering.  LipForcing emits the H3-polarity
+    # MASK; the existing MaskToImage node makes it compatible with the
+    # temporal padding branch.  Padding happens before the existing resize to
+    # H3's canvas, ImageToMask restores MASK type, and GrowMaskWithBlur then
+    # runs at the same resolution and with the same settings as the tested
+    # graph.
+    wired[MASK_TO_IMAGE_NODE_ID]["inputs"]["mask"] = [NODE_ID, MASK_OUTPUT]
     wired[LAST_MASK_FRAME_NODE_ID]["inputs"]["image"] = [MASK_TO_IMAGE_NODE_ID, 0]
     wired[MASK_BATCH_NODE_ID]["inputs"]["image_1"] = [MASK_TO_IMAGE_NODE_ID, 0]
-    wired[MASK_CROP_NODE_IDS[0]]["inputs"]["masks"] = [MASK_CONVERT_NODE_ID, 0]
-    wired[MASK_CROP_NODE_IDS[1]]["inputs"]["original_images"] = [MASK_RESIZE_NODE_ID, 0]
-    wired[MASK_CROP_NODE_IDS[1]]["inputs"]["masks"] = [MASK_CONVERT_NODE_ID, 0]
-    wired[MASK_CROP_NODE_IDS[2]]["inputs"]["masks"] = [MASK_CONVERT_NODE_ID, 0]
-    wired[COMPOSITE_NODE_ID]["inputs"]["mask"] = [MASK_CONVERT_NODE_ID, 0]
+    wired[MASK_RESIZE_NODE_ID]["inputs"]["image"] = [MASK_BATCH_NODE_ID, 0]
+    wired[MASK_CONVERT_NODE_ID]["inputs"]["image"] = [MASK_RESIZE_NODE_ID, 0]
+    wired[GROWN_MASK_NODE_ID]["inputs"]["mask"] = [MASK_CONVERT_NODE_ID, 0]
+
+    # These consumers intentionally remain on the grown-mask output.  The
+    # original graph uses the same node for subject crops and compositing.
+    for node_id in MASK_CROP_NODE_IDS:
+        wired[node_id]["inputs"]["masks"] = [GROWN_MASK_NODE_ID, 0]
+    wired[COMPOSITE_NODE_ID]["inputs"]["mask"] = [GROWN_MASK_NODE_ID, 0]
     return wired
 
 

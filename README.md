@@ -7,8 +7,8 @@ It does **not** run LipForcing generation, decode audio, change H3 conditioning,
 ## Runtime contract
 
 - Input `images`: ComfyUI `IMAGE`, `[frames, height, width, channels]`, RGB in `[0, 1]`.
-- Output `0 / mask_images`: three-channel `IMAGE`, `[frames, height, width, 3]`, retained for visualization and the post-grow H3 padding branch.
-- Output `1 / mask`: ComfyUI `MASK`, `[frames, height, width]`, for the direct `GrowMaskWithBlur` connection.
+- Output `0 / mask_images`: three-channel `IMAGE`, `[frames, height, width, 3]`, retained for visualization or debugging.
+- Output `1 / mask`: ComfyUI `MASK`, `[frames, height, width]`, in H3 polarity (white means editable).
 - Output `2 / report`: JSON `STRING` with dimensions, providers and coverage statistics.
 - Mask semantics: `1 = regenerate`, `0 = preserve`.
 - A processor instance is cached by the LipForcing source/template fingerprint, PyTorch device and ONNX provider, but `restorer.p_bias` is reset once for every input batch so independent clips never share temporal alignment state.
@@ -46,16 +46,15 @@ The API graph integration is intentionally narrow:
 |---|---|
 | `9651` — source `VHS_LoadVideo` | Keep unchanged; connect image output 0 to `LipForcingMask.images` |
 | `836` — mask `VHS_LoadVideo` | Remove |
-| `756` — `GrowMaskWithBlur` | Change `mask` to `["lipforcing_mask", 1]`, the node's direct H3 `MASK` output |
-| `914` — `MaskToImage` | Keep as the conversion point used only by the existing H3 last-frame padding branch |
+| `914` — `MaskToImage` | Change `mask` to `["lipforcing_mask", 1]`, making the node output compatible with the existing image-based padding branch |
 | `9608:9606 -> 9608:9605` | Use `914` as the source image, preserving the tested last-frame padding to H3's required temporal length |
-| `840 -> 842` | Resize and convert the padded mask back to `MASK` |
-| `912`, `913`, `923`, `772` | Use `842` so source, crop, latent mask and final composite share the padded frame count |
+| `840 -> 842 -> 756` | Keep the tested order: resize the padded mask to the H3 canvas, convert back to `MASK`, then grow/blur at the H3 resolution |
+| `912`, `913`, `923`, `772` | Keep the existing grown-mask output from `756` so source, crop, latent mask and final composite use the same mask |
 | H3 Exact Audio Lock and audio mux nodes | Keep unchanged |
 
 `workflow.wire_prototype_workflow()` applies and validates those exact API-graph edits without changing the rest of the graph.
 
-The node exposes the direct H3-polarity `MASK` output as output index `1`; the helper connects that output directly to `GrowMaskWithBlur`. The existing image-compatible nodes remain only after the grow stage so the saved H3 graph can repeat the final mask frame when its model-length expression requires more frames than the source clip. This keeps LipForcing's one-mask-per-source-frame contract intact while satisfying H3's latent-shape contract.
+The node exposes the H3-polarity `MASK` output as output index `1`. The helper connects it to the existing `MaskToImage` node, then preserves the tested sequence `temporal padding → H3-canvas resize → ImageToMask → GrowMaskWithBlur`. The grown mask remains the input to the subject crops, latent mask, and final composite. This keeps LipForcing's one-mask-per-source-frame contract intact while satisfying H3's latent-shape and mask-resolution contracts.
 
 ## Failure behavior
 

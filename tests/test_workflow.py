@@ -78,7 +78,7 @@ class WorkflowIntegrationTest(unittest.TestCase):
         self.module = load_workflow_module()
         self.original = prototype_graph()
 
-    def test_connects_full_frame_mask_directly_and_preserves_padding(self):
+    def test_preserves_tested_mask_order_and_padding(self):
         wired = self.module.wire_prototype_workflow(self.original)
 
         self.assertIn("836", self.original)
@@ -89,14 +89,18 @@ class WorkflowIntegrationTest(unittest.TestCase):
             wired["lipforcing_mask"]["inputs"]["onnx_provider"],
             "CPUExecutionProvider",
         )
-        self.assertEqual(wired["756"]["inputs"]["mask"], ["lipforcing_mask", 1])
+        self.assertEqual(wired["914"]["inputs"]["mask"], ["lipforcing_mask", 1])
         self.assertEqual(wired["9608:9606"]["inputs"]["image"], ["914", 0])
         self.assertEqual(wired["9608:9605"]["inputs"]["image_1"], ["914", 0])
         self.assertEqual(wired["840"]["inputs"]["image"], ["9608:9605", 0])
         self.assertEqual(wired["842"]["inputs"]["image"], ["840", 0])
+        self.assertEqual(wired["756"]["inputs"]["mask"], ["842", 0])
         for node_id in ("912", "913", "923", "772"):
-            self.assertEqual(wired[node_id]["inputs"]["masks" if node_id != "772" else "mask"], ["842", 0])
-        self.assertEqual(wired["913"]["inputs"]["original_images"], ["840", 0])
+            self.assertEqual(
+                wired[node_id]["inputs"]["masks" if node_id != "772" else "mask"],
+                ["756", 0],
+            )
+        self.assertEqual(wired["913"]["inputs"]["original_images"], ["914", 0])
         self.assertEqual(wired["840"], self.original["840"])
 
     def test_does_not_mutate_input_graph(self):
