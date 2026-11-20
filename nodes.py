@@ -300,6 +300,62 @@ def _full_frame_mask(processor, rgb, height, width):
     )[0, 0].clamp(0.0, 1.0).to(device="cpu", dtype=torch.float32)
 
 
+class LipForcingH3TemporalPad:
+    """Append copies of the last frame without the stock zero-count hazard.
+
+    The tested H3 graph computes ``target_length - source_frame_count`` and
+    appends that many copies of the source's last frame. ComfyUI's stock
+    ``RepeatImageBatch`` rejects zero even though zero is the correct amount
+    when the source already has the target length. This node owns the whole
+    append operation so the zero case is an ordinary identity operation and
+    never creates an empty intermediate batch.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "last_frame": ("IMAGE",),
+                "amount": (
+                    "INT",
+                    {"default": 1, "min": 0, "max": 4096, "step": 1},
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    FUNCTION = "pad"
+    CATEGORY = "MiniMax H3/Lip Sync"
+    DESCRIPTION = (
+        "Append the source last frame by a non-negative amount. A zero amount "
+        "returns the source batch unchanged."
+    )
+
+    def pad(self, image, last_frame, amount):
+        if amount < 0:
+            raise ValueError(
+                "H3 temporal padding would require a negative amount; "
+                "the source frame count exceeds the target length."
+            )
+        if image.ndim != 4 or last_frame.ndim != 4:
+            raise ValueError(
+                "Expected IMAGE tensors with layout [frames, height, width, channels]."
+            )
+        if image.shape[0] < 1 or last_frame.shape[0] < 1:
+            raise ValueError("Temporal padding requires at least one source frame.")
+        if image.shape[1:] != last_frame.shape[1:]:
+            raise ValueError(
+                "Source and last-frame images must have identical spatial and channel dimensions."
+            )
+        if amount == 0:
+            return (image,)
+
+        repeated_last_frame = last_frame[-1:].repeat((amount, 1, 1, 1))
+        return (torch.cat((image, repeated_last_frame), dim=0),)
+
+
 class LipForcingMask:
     @classmethod
     def INPUT_TYPES(cls):
@@ -429,4 +485,4 @@ class LipForcingMask:
         return mask_images, mask_batch, report
 
 
-__all__ = ["LipForcingMask"]
+__all__ = ["LipForcingH3TemporalPad", "LipForcingMask"]

@@ -46,15 +46,23 @@ The API graph integration is intentionally narrow:
 |---|---|
 | `9651` — source `VHS_LoadVideo` | Keep unchanged; connect image output 0 to `LipForcingMask.images` |
 | `836` — mask `VHS_LoadVideo` | Remove |
-| `914` — `MaskToImage` | Change `mask` to `["lipforcing_mask", 1]`, making the node output compatible with the existing image-based padding branch |
-| `9608:9606 -> 9608:9605` | Use `914` as the source image, preserving the tested last-frame padding to H3's required temporal length |
+| `lipforcing_mask_image` — `MaskToImage` | New adapter from `LipForcingMask` output `1 / mask` to the existing image-based temporal padding branch |
+| `9608:9606 -> 9608:9605` | Use `lipforcing_mask_image` as the source image and the final source frame as the append frame |
+| `9608:9605` — `LipForcingH3TemporalPad` | Replace the stock `RepeatImageBatch` + `ImageBatchMulti` pair; append the requested number of last-frame copies, or return the source unchanged when the amount is zero |
+| `1017` — target-minus-source expression | Keep unchanged; its non-negative result is passed to the package-owned temporal pad node |
 | `840 -> 842 -> 756` | Keep the tested order: resize the padded mask to the H3 canvas, convert back to `MASK`, then grow/blur at the H3 resolution |
+| `914` — `MaskToImage` | Keep as the original post-grow conversion from `756`, preserving the downstream crop frame-count contract |
 | `912`, `913`, `923`, `772` | Keep the existing grown-mask output from `756` so source, crop, latent mask and final composite use the same mask |
 | H3 Exact Audio Lock and audio mux nodes | Keep unchanged |
 
 `workflow.wire_prototype_workflow()` applies and validates those exact API-graph edits without changing the rest of the graph.
 
-The node exposes the H3-polarity `MASK` output as output index `1`. The helper connects it to the existing `MaskToImage` node, then preserves the tested sequence `temporal padding → H3-canvas resize → ImageToMask → GrowMaskWithBlur`. The grown mask remains the input to the subject crops, latent mask, and final composite. This keeps LipForcing's one-mask-per-source-frame contract intact while satisfying H3's latent-shape and mask-resolution contracts.
+A complete checked-in H3 FL2VA API graph using this node is available at
+[`workflows/minimax_h3_fl2va_lipforcing_api.json`](workflows/minimax_h3_fl2va_lipforcing_api.json),
+with setup and input instructions in
+[`workflows/README.md`](workflows/README.md).
+
+The node exposes the H3-polarity `MASK` output as output index `1`. The helper adapts that output to `IMAGE` only for the existing temporal-padding branch, then preserves the tested sequence `temporal padding → H3-canvas resize → ImageToMask → GrowMaskWithBlur`. The original post-grow `MaskToImage` node remains in place for downstream crop inputs. Temporal padding is handled by the package-owned `LipForcingH3TemporalPad`: positive amounts append the source's final frame, while zero returns the source batch unchanged, so an exact-length source never reaches ComfyUI's stock `RepeatImageBatch` with an invalid `amount=0`. The grown mask remains the input to the subject crops, latent mask, and final composite. This keeps LipForcing's one-mask-per-source-frame contract intact while satisfying H3's latent-shape and mask-resolution contracts.
 
 ## Failure behavior
 

@@ -54,6 +54,15 @@ class SourceContractTest(unittest.TestCase):
         source = (PACKAGE_ROOT / "nodes.py").read_text()
         self.assertIn("LipForcing face alignment failed at source frame {index}", source)
 
+    def test_temporal_pad_handles_zero_without_empty_intermediate(self):
+        source = (PACKAGE_ROOT / "nodes.py").read_text()
+        self.assertIn("class LipForcingH3TemporalPad:", source)
+        self.assertIn('"amount": (\n                    "INT"', source)
+        self.assertIn('"min": 0', source)
+        self.assertIn("if amount == 0:", source)
+        self.assertIn("return (image,)", source)
+        self.assertIn("last_frame[-1:].repeat((amount, 1, 1, 1))", source)
+
 
 if __name__ == "__main__":
     unittest.main()

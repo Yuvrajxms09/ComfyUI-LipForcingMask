@@ -26,6 +26,14 @@ def prototype_graph():
             "class_type": "RepeatImageBatch",
             "inputs": {"image": ["9608:9606", 0]},
         },
+        "1017": {
+            "class_type": "ComfyMathExpression",
+            "inputs": {
+                "expression": "(a - b)",
+                "values.a": ["target_length", 1],
+                "values.b": ["9651", 1],
+            },
+        },
         "914": {
             "class_type": "MaskToImage",
             "inputs": {"mask": ["756", 0]},
@@ -83,15 +91,36 @@ class WorkflowIntegrationTest(unittest.TestCase):
 
         self.assertIn("836", self.original)
         self.assertNotIn("836", wired)
+        self.assertNotIn("9608:9604", wired)
         self.assertEqual(wired["lipforcing_mask"]["class_type"], "LipForcingMask")
+        self.assertEqual(
+            wired["lipforcing_mask_image"]["class_type"], "MaskToImage"
+        )
+        self.assertEqual(
+            wired["lipforcing_mask_image"]["inputs"]["mask"],
+            ["lipforcing_mask", 1],
+        )
         self.assertEqual(wired["lipforcing_mask"]["inputs"]["images"], ["9651", 0])
         self.assertEqual(
             wired["lipforcing_mask"]["inputs"]["onnx_provider"],
             "CPUExecutionProvider",
         )
-        self.assertEqual(wired["914"]["inputs"]["mask"], ["lipforcing_mask", 1])
-        self.assertEqual(wired["9608:9606"]["inputs"]["image"], ["914", 0])
-        self.assertEqual(wired["9608:9605"]["inputs"]["image_1"], ["914", 0])
+        self.assertEqual(wired["914"]["inputs"]["mask"], ["756", 0])
+        self.assertEqual(
+            wired["9608:9606"]["inputs"]["image"],
+            ["lipforcing_mask_image", 0],
+        )
+        self.assertEqual(
+            wired["9608:9605"]["class_type"], "LipForcingH3TemporalPad"
+        )
+        self.assertEqual(
+            wired["9608:9605"]["inputs"],
+            {
+                "image": ["lipforcing_mask_image", 0],
+                "last_frame": ["9608:9606", 0],
+                "amount": ["1017", 1],
+            },
+        )
         self.assertEqual(wired["840"]["inputs"]["image"], ["9608:9605", 0])
         self.assertEqual(wired["842"]["inputs"]["image"], ["840", 0])
         self.assertEqual(wired["756"]["inputs"]["mask"], ["842", 0])
@@ -127,13 +156,18 @@ class WorkflowIntegrationTest(unittest.TestCase):
         dangling = []
         for node_id, node in wired.items():
             for input_name, value in node.get("inputs", {}).items():
-                if (
-                    isinstance(value, list)
-                    and len(value) == 2
-                    and value[0] == "836"
-                ):
+                if isinstance(value, list) and len(value) == 2 and value[0] in {
+                    "836",
+                    "9608:9604",
+                }:
                     dangling.append((node_id, input_name))
         self.assertEqual(dangling, [])
+
+    def test_requires_target_length_expression(self):
+        graph = dict(self.original)
+        del graph["1017"]
+        with self.assertRaises(KeyError):
+            self.module.wire_prototype_workflow(graph)
 
 
 if __name__ == "__main__":

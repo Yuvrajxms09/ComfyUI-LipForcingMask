@@ -4,8 +4,11 @@ from copy import deepcopy
 NODE_ID = "lipforcing_mask"
 SOURCE_VIDEO_NODE_ID = "9651"
 MASK_VIDEO_NODE_ID = "836"
+RAW_MASK_TO_IMAGE_NODE_ID = "lipforcing_mask_image"
 LAST_MASK_FRAME_NODE_ID = "9608:9606"
 MASK_BATCH_NODE_ID = "9608:9605"
+TEMPORAL_REPEAT_NODE_ID = "9608:9604"
+TEMPORAL_AMOUNT_NODE_ID = "1017"
 MASK_TO_IMAGE_NODE_ID = "914"
 MASK_RESIZE_NODE_ID = "840"
 MASK_CONVERT_NODE_ID = "842"
@@ -38,6 +41,8 @@ def wire_prototype_workflow(
         MASK_VIDEO_NODE_ID,
         LAST_MASK_FRAME_NODE_ID,
         MASK_BATCH_NODE_ID,
+        TEMPORAL_REPEAT_NODE_ID,
+        TEMPORAL_AMOUNT_NODE_ID,
         MASK_TO_IMAGE_NODE_ID,
         MASK_RESIZE_NODE_ID,
         MASK_CONVERT_NODE_ID,
@@ -50,9 +55,12 @@ def wire_prototype_workflow(
         raise KeyError(f"Workflow is missing expected prototype nodes: {missing}")
     if NODE_ID in graph:
         raise KeyError(f"Workflow already contains node {NODE_ID!r}")
+    if RAW_MASK_TO_IMAGE_NODE_ID in graph:
+        raise KeyError(f"Workflow already contains node {RAW_MASK_TO_IMAGE_NODE_ID!r}")
 
     wired = deepcopy(graph)
     del wired[MASK_VIDEO_NODE_ID]
+    del wired[TEMPORAL_REPEAT_NODE_ID]
     wired[NODE_ID] = {
         "inputs": {
             "images": [SOURCE_VIDEO_NODE_ID, 0],
@@ -63,15 +71,27 @@ def wire_prototype_workflow(
         "class_type": "LipForcingMask",
         "_meta": {"title": "LipForcing Mask (Full Frame)"},
     }
-    # Preserve the tested graph's ordering.  LipForcing emits the H3-polarity
-    # MASK; the existing MaskToImage node makes it compatible with the
-    # temporal padding branch.  Padding happens before the existing resize to
-    # H3's canvas, ImageToMask restores MASK type, and GrowMaskWithBlur then
-    # runs at the same resolution and with the same settings as the tested
-    # graph.
-    wired[MASK_TO_IMAGE_NODE_ID]["inputs"]["mask"] = [NODE_ID, MASK_OUTPUT]
-    wired[LAST_MASK_FRAME_NODE_ID]["inputs"]["image"] = [MASK_TO_IMAGE_NODE_ID, 0]
-    wired[MASK_BATCH_NODE_ID]["inputs"]["image_1"] = [MASK_TO_IMAGE_NODE_ID, 0]
+    wired[RAW_MASK_TO_IMAGE_NODE_ID] = {
+        "inputs": {"mask": [NODE_ID, MASK_OUTPUT]},
+        "class_type": "MaskToImage",
+        "_meta": {"title": "LipForcing Raw Mask To Image"},
+    }
+    # Preserve the tested graph's ordering.  The raw adapter makes
+    # LipForcing's H3-polarity MASK compatible with the image-based temporal
+    # padding branch. Padding happens before the existing resize to H3's
+    # canvas, ImageToMask restores MASK type, and GrowMaskWithBlur then runs at
+    # the same resolution and with the same settings as the tested graph.
+    wired[MASK_TO_IMAGE_NODE_ID]["inputs"]["mask"] = [GROWN_MASK_NODE_ID, 0]
+    wired[LAST_MASK_FRAME_NODE_ID]["inputs"]["image"] = [RAW_MASK_TO_IMAGE_NODE_ID, 0]
+    wired[MASK_BATCH_NODE_ID]["class_type"] = "LipForcingH3TemporalPad"
+    wired[MASK_BATCH_NODE_ID]["_meta"] = {
+        "title": "LipForcing H3 Temporal Pad",
+    }
+    wired[MASK_BATCH_NODE_ID]["inputs"] = {
+        "image": [RAW_MASK_TO_IMAGE_NODE_ID, 0],
+        "last_frame": [LAST_MASK_FRAME_NODE_ID, 0],
+        "amount": [TEMPORAL_AMOUNT_NODE_ID, 1],
+    }
     wired[MASK_RESIZE_NODE_ID]["inputs"]["image"] = [MASK_BATCH_NODE_ID, 0]
     wired[MASK_CONVERT_NODE_ID]["inputs"]["image"] = [MASK_RESIZE_NODE_ID, 0]
     wired[GROWN_MASK_NODE_ID]["inputs"]["mask"] = [MASK_CONVERT_NODE_ID, 0]
